@@ -2,6 +2,7 @@ package io.kestra.plugin.core.flow;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.kestra.core.exceptions.IllegalVariableEvaluationException;
+import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
@@ -172,27 +173,33 @@ public class LoopUntil extends Task implements FlowableTask<LoopUntil.Output> {
             return false;
         }
 
-        Integer iterationCount = Optional.ofNullable(parentTaskRun.getOutputs())
-            .map(outputs -> (Integer) outputs.get("iterationCount"))
-            .orElse(0);
+        try {
+            Map<String, Object> outputs = runContext.currentOutput();
+            Integer iterationCount = Optional.ofNullable(outputs)
+                .map(out -> (Integer) out.get("iterationCount"))
+                .orElse(0);
 
-        Optional<Integer> maxIterations = runContext.render(this.getCheckFrequency().getMaxIterations()).as(Integer.class);
-        if (maxIterations.isPresent() && iterationCount > maxIterations.get()) {
-            if (printLog) {logger.warn("Max iterations reached");}
-            return true;
+            Optional<Integer> maxIterations = runContext.render(this.getCheckFrequency().getMaxIterations()).as(Integer.class);
+            if (maxIterations.isPresent() && iterationCount > maxIterations.get()) {
+                if (printLog) {logger.warn("Max iterations reached");}
+                return true;
+            }
+
+            Instant creationDate = parentTaskRun.getState().getHistories().getFirst().getDate();
+            Optional<Duration> maxDuration = runContext.render(this.getCheckFrequency().getMaxDuration()).as(Duration.class);
+            if (maxDuration.isPresent()
+                && creationDate != null
+                && creationDate.plus(maxDuration.get()).isBefore(Instant.now())) {
+                if (printLog) {logger.warn("Max duration reached");}
+
+                return true;
+            }
+
+            return false;
+        } catch (InternalException e) {
+            // FIXME: not pretty we should throw a different exception everywhere and impact the executor
+            throw new IllegalVariableEvaluationException(e);
         }
-
-        Instant creationDate = parentTaskRun.getState().getHistories().getFirst().getDate();
-        Optional<Duration> maxDuration = runContext.render(this.getCheckFrequency().getMaxDuration()).as(Duration.class);
-        if (maxDuration.isPresent()
-            && creationDate != null
-            && creationDate.plus(maxDuration.get()).isBefore(Instant.now())) {
-            if (printLog) {logger.warn("Max duration reached");}
-
-            return true;
-        }
-
-        return false;
     }
 
     @Override
@@ -247,11 +254,10 @@ public class LoopUntil extends Task implements FlowableTask<LoopUntil.Output> {
             .build();
     }
 
-    public LoopUntil.Output outputs(TaskRun parentTaskRun) throws IllegalVariableEvaluationException {
-        String value = parentTaskRun != null ?
-            String.valueOf(Optional.ofNullable(parentTaskRun.getOutputs())
+    public LoopUntil.Output outputs(Map<String, Object> previousOutput) throws IllegalVariableEvaluationException {
+        String value = String.valueOf(Optional.ofNullable(previousOutput)
                 .map(outputs -> outputs.get("iterationCount"))
-                .orElse("0")) : "0";
+                .orElse("0"));
 
         return Output.builder()
             .iterationCount(Integer.parseInt(value) + 1)

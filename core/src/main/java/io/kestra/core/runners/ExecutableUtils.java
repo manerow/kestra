@@ -22,6 +22,7 @@ import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.context.propagation.TextMapPropagator;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.stream.Streams;
+import org.apache.commons.lang3.tuple.Pair;
 
 import java.time.ZonedDateTime;
 import java.util.*;
@@ -51,11 +52,12 @@ public final class ExecutableUtils {
         }
     }
 
-    public static SubflowExecutionResult subflowExecutionResult(TaskRun parentTaskrun, Execution execution) {
+    public static SubflowExecutionResult subflowExecutionResult(TaskRun parentTaskrun, Map<String, Object> outputs, Execution execution) {
         return SubflowExecutionResult.builder()
             .executionId(execution.getId())
             .state(parentTaskrun.getState().getCurrent())
             .parentTaskRun(parentTaskrun.addAttempt(TaskRunAttempt.builder().state(parentTaskrun.getState()).build()))
+            .outputs(outputs)
             .build();
     }
 
@@ -69,8 +71,8 @@ public final class ExecutableUtils {
         Map<String, Object> inputs,
         List<Label> labels,
         boolean inheritLabels,
-        Property<ZonedDateTime> scheduleDate
-    ) throws IllegalVariableEvaluationException {
+        Property<ZonedDateTime> scheduleDate,
+        Map<String, Object> outputMap) throws IllegalVariableEvaluationException {
 
         // extract a trace context for propagation
         final Optional<TextMapPropagator> propagator = ((DefaultRunContext) runContext).services().tracerFactory()
@@ -91,9 +93,9 @@ public final class ExecutableUtils {
                 ExecutionRepositoryInterface executionRepository = ((DefaultRunContext) runContext).services().additionalService(ExecutionRepositoryInterface.class);
 
                 Optional<Execution> existingSubflowExecution = Optional.empty();
-                if (currentTaskRun.getOutputs() != null && currentTaskRun.getOutputs().containsKey("executionId")) {
+                if (!MapUtils.isEmpty(outputMap) && outputMap.containsKey("executionId")) {
                     // we know which execution to restart; this should be the case for Subflow tasks
-                    existingSubflowExecution = executionRepository.findById(currentExecution.getTenantId(), (String) currentTaskRun.getOutputs().get("executionId"));
+                    existingSubflowExecution = executionRepository.findById(currentExecution.getTenantId(), (String) outputMap.get("executionId"));
                 }
 
                 if (existingSubflowExecution.isEmpty()) {
@@ -128,6 +130,7 @@ public final class ExecutableUtils {
                             .parentTask(currentTask)
                             .parentTaskRun(currentTaskRun.withState(State.Type.RUNNING))
                             .execution(restarted)
+                            .outputs(outputMap) // FIXME check that it may not be what we need to do...
                             .build());
                     } catch (Exception e) {
                         throw new RuntimeException(e);
@@ -179,8 +182,8 @@ public final class ExecutableUtils {
                 "taskRunId", currentTaskRun.getId(),
                 "taskId", currentTaskRun.getTaskId()
             ));
-            if (currentTaskRun.getOutputs() != null) {
-                variables.put("taskRunOutputs", currentTaskRun.getOutputs());
+            if (!MapUtils.isEmpty(outputMap)) {
+                variables.put("taskRunOutputs", outputMap);
             }
             if (currentTaskRun.getValue() != null) {
                 variables.put("taskRunValue", currentTaskRun.getValue());
@@ -225,6 +228,7 @@ public final class ExecutableUtils {
                 .parentTask(currentTask)
                 .parentTaskRun(currentTaskRun.withState(State.Type.RUNNING))
                 .execution(execution)
+                .outputs(outputMap)
                 .build());
         }));
     }
@@ -246,12 +250,8 @@ public final class ExecutableUtils {
     }
 
     @SuppressWarnings("unchecked")
-    public static TaskRun manageIterations(Storage storage, TaskRun taskRun, Execution execution, boolean transmitFailed, boolean allowFailure, boolean allowWarning) throws InternalException {
-        Integer numberOfBatches = (Integer) taskRun.getOutputs().get(TASK_VARIABLE_NUMBER_OF_BATCHES);
-        var previousTaskRun = execution.findTaskRunByTaskRunId(taskRun.getId());
-        if (previousTaskRun == null) {
-            throw new IllegalStateException("Should never happen");
-        }
+    public static Pair<TaskRun, Map<String, Object>> manageIterations(Storage storage, TaskRun taskRun, Map<String, Object> outputs, TaskRun previousTaskRun, Map<String, Object> previousOutputs, boolean transmitFailed, boolean allowFailure, boolean allowWarning) throws InternalException {
+        Integer numberOfBatches = (Integer) outputs.get(TASK_VARIABLE_NUMBER_OF_BATCHES);
 
         State.Type currentState = taskRun.getState().getCurrent();
         Optional<State.Type> previousState = taskRun.getState().getHistories().size() > 1 ?
@@ -259,8 +259,8 @@ public final class ExecutableUtils {
             Optional.empty();
 
         // search for the previous iterations, if not found, we init it with an empty map
-        Map<String, Integer> iterations = !MapUtils.isEmpty(previousTaskRun.getOutputs()) ?
-            (Map<String, Integer>) previousTaskRun.getOutputs().get(TASK_VARIABLE_ITERATIONS) :
+        Map<String, Integer> iterations = !MapUtils.isEmpty(previousOutputs) ?
+            (Map<String, Integer>) previousOutputs.get(TASK_VARIABLE_ITERATIONS) :
             new HashMap<>();
 
         int currentStateIteration = iterations.getOrDefault(currentState.toString(), 0);
@@ -284,25 +284,25 @@ public final class ExecutableUtils {
 
         if (terminatedIterations == numberOfBatches) {
             State.Type state = transmitFailed ? findTerminalState(iterations, allowFailure, allowWarning) : State.Type.SUCCESS;
-            final Map<String, Object> outputs = new HashMap<>();
-            outputs.put(TASK_VARIABLE_ITERATIONS, iterations);
-            outputs.put(TASK_VARIABLE_NUMBER_OF_BATCHES, numberOfBatches);
-            outputs.put(TASK_VARIABLE_SUBFLOW_OUTPUTS_BASE_URI, storage.getContextBaseURI().getPath());
-
-            return previousTaskRun
-                .withIteration(taskRun.getIteration())
-                .withOutputs(Variables.inMemory(outputs))
-                .withAttempts(Collections.singletonList(TaskRunAttempt.builder().state(new State().withState(state)).build()))
-                .withState(state);
+            return Pair.of(
+                previousTaskRun
+                    .withIteration(taskRun.getIteration())
+                    .withAttempts(Collections.singletonList(TaskRunAttempt.builder().state(new State().withState(state)).build()))
+                    .withState(state),
+                Map.of(
+                    TASK_VARIABLE_ITERATIONS, iterations,
+                    TASK_VARIABLE_NUMBER_OF_BATCHES, numberOfBatches,
+                    TASK_VARIABLE_SUBFLOW_OUTPUTS_BASE_URI, storage.getContextBaseURI().getPath()
+                ));
         }
 
         // else we update the previous taskRun as it's the same taskRun that is still running
-        return previousTaskRun
-            .withIteration(taskRun.getIteration())
-            .withOutputs(Variables.inMemory(Map.of(
+        return Pair.of(
+            previousTaskRun.withIteration(taskRun.getIteration()),
+            Map.of(
                 TASK_VARIABLE_ITERATIONS, iterations,
                 TASK_VARIABLE_NUMBER_OF_BATCHES, numberOfBatches
-            )));
+            ));
     }
 
     private static State.Type findTerminalState(Map<String, Integer> iterations, boolean allowFailure, boolean allowWarning) {
@@ -321,10 +321,10 @@ public final class ExecutableUtils {
         return State.Type.SUCCESS;
     }
 
-    public static SubflowExecutionResult subflowExecutionResultFromChildExecution(RunContext runContext, FlowInterface flow, Execution execution, ExecutableTask<?> executableTask, TaskRun taskRun) {
+    public static SubflowExecutionResult subflowExecutionResultFromChildExecution(RunContext runContext, FlowInterface flow, Execution execution, ExecutableTask<?> executableTask, TaskRun taskRun, Map<String, Object> outputs) {
         try {
             return executableTask
-                .createSubflowExecutionResult(runContext, taskRun, flow, execution)
+                .createSubflowExecutionResult(runContext, taskRun, flow, execution, outputs)
                 .orElse(null);
         } catch (Exception e) {
             log.error("Unable to create the Subflow Execution Result", e);
@@ -333,6 +333,7 @@ public final class ExecutableUtils {
                 .executionId(execution.getId())
                 .state(State.Type.FAILED)
                 .parentTaskRun(taskRun.withState(State.Type.FAILED).withAttempts(List.of(TaskRunAttempt.builder().state(new State().withState(State.Type.FAILED)).build())))
+                .outputs(outputs)
                 .build();
         }
     }

@@ -3,6 +3,7 @@ package io.kestra.core.runners;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.CharStreams;
 import io.kestra.core.exceptions.InputOutputValidationException;
+import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.junit.annotations.LoadFlows;
 import io.kestra.core.models.executions.Execution;
@@ -13,6 +14,7 @@ import io.kestra.core.models.tasks.common.EncryptedString;
 import io.kestra.core.queues.DispatchQueueInterface;
 import io.kestra.core.queues.QueueException;
 import io.kestra.core.repositories.FlowRepositoryInterface;
+import io.kestra.core.services.TaskOutputService;
 import io.kestra.core.storages.Namespace;
 import io.kestra.core.storages.NamespaceFactory;
 import io.kestra.core.storages.StorageInterface;
@@ -110,6 +112,9 @@ public class InputsTest {
     @Inject
     private FlowInputOutput flowInputOutput;
 
+    @Inject
+    private TaskOutputService taskOutputService;
+
     private Map<String, Object> typedInputs(Map<String, Object> map, String tenantId) {
         return typedInputs(map, flowRepository.findById(tenantId, "io.kestra.tests", "inputs").get());
     }
@@ -204,7 +209,7 @@ public class InputsTest {
 
     @Test
     @LoadFlows(value = {"flows/valids/inputs.yaml"}, tenantId = "tenant3")
-    void inputFlow() throws TimeoutException, QueueException {
+    void inputFlow() throws TimeoutException, QueueException, io.kestra.core.exceptions.InternalException {
         Execution execution = runnerUtils.runOne(
             "tenant3",
             "io.kestra.tests",
@@ -215,11 +220,15 @@ public class InputsTest {
 
         assertThat(execution.getTaskRunList()).hasSize(16);
         assertThat(execution.getState().getCurrent()).isEqualTo(State.Type.SUCCESS);
-        assertThat((String) execution.findTaskRunsByTaskId("file").getFirst().getOutputs().get("value")).matches("kestra:///io/kestra/tests/inputs/executions/.*/inputs/file/application-test.yml");
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("file").getFirst()).get("value")).matches("kestra:///io/kestra/tests/inputs/executions/.*/inputs/file/application-test.yml");
         // secret inputs are decrypted to be used as task properties
-        assertThat((String) execution.findTaskRunsByTaskId("secret").getFirst().getOutputs().get("value")).isEqualTo("secret");
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("secret").getFirst()).get("value")).isEqualTo("secret");
         // null inputs are serialized
-        assertThat((String) execution.findTaskRunsByTaskId("optional").getFirst().getOutputs().get("value")).isEmpty();
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("optional").getFirst()).get("value")).isEmpty();
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("jsonOutput").getFirst()).get("value")).isEqualTo("{}");
+        // FIXME
+//        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("file").getFirst()).get("value")).isEqualTo(file.toString());
+//        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("file").getFirst()).get("value")).isEqualTo(file.toString());
     }
 
     @Test
@@ -365,7 +374,7 @@ public class InputsTest {
 
     @Test
     @LoadFlows(value = {"flows/valids/inputs.yaml"}, tenantId = "tenant15")
-    void inputEmptyJsonFlow() throws TimeoutException, QueueException {
+    void inputEmptyJsonFlow() throws TimeoutException, QueueException, InternalException {
         HashMap<String, Object> map = new HashMap<>(inputs);
         map.put("json1", "{}");
 
@@ -382,7 +391,7 @@ public class InputsTest {
 
         assertThat(execution.getInputs().get("json1")).isInstanceOf(Map.class);
         assertThat(((Map<?, ?>) execution.getInputs().get("json1")).size()).isZero();
-        assertThat((String) execution.findTaskRunsByTaskId("jsonOutput").getFirst().getOutputs().get("value")).isEqualTo("{}");
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("jsonOutput").getFirst()).get("value")).isEqualTo("{}");
     }
 
     @Test
@@ -414,7 +423,7 @@ public class InputsTest {
 
     @Test
     @LoadFlows(value = {"flows/valids/inputs.yaml"}, tenantId = "tenant17")
-    void fileInputWithFileDefault() throws IOException, QueueException, TimeoutException {
+    void fileInputWithFileDefault() throws IOException, QueueException, TimeoutException, io.kestra.core.exceptions.InternalException {
         HashMap<String, Object> newInputs = new HashMap<>(InputsTest.inputs);
         URI file = createFile();
         newInputs.put("file", file);
@@ -428,12 +437,12 @@ public class InputsTest {
         );
 
         assertThat(execution.getState().getCurrent()).isEqualTo(State.Type.SUCCESS);
-        assertThat((String) execution.findTaskRunsByTaskId("file").getFirst().getOutputs().get("value")).isEqualTo(file.toString());
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("file").getFirst()).get("value")).isEqualTo(file.toString());
     }
 
     @Test
     @LoadFlows(value = {"flows/valids/inputs.yaml"}, tenantId = "tenant18")
-    void fileInputWithNsfile() throws IOException, QueueException, TimeoutException, URISyntaxException {
+    void fileInputWithNsfile() throws IOException, QueueException, TimeoutException, URISyntaxException, io.kestra.core.exceptions.InternalException {
         HashMap<String, Object> inputs = new HashMap<>(InputsTest.inputs);
         URI file = createNsFile(false);
         inputs.put("file", file);
@@ -447,7 +456,7 @@ public class InputsTest {
         );
 
         assertThat(execution.getState().getCurrent()).isEqualTo(State.Type.SUCCESS);
-        assertThat((String) execution.findTaskRunsByTaskId("file").getFirst().getOutputs().get("value")).isEqualTo(file.toString());
+        assertThat((String) taskOutputService.getOutputs(execution.findTaskRunsByTaskId("file").getFirst()).get("value")).isEqualTo(file.toString());
     }
     @Test
     @LoadFlows(value = "flows/invalids/inputs-with-multiple-constraint-violations.yaml")

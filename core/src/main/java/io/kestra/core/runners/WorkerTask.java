@@ -12,6 +12,8 @@ import lombok.With;
 
 import jakarta.validation.constraints.NotNull;
 
+import java.util.Map;
+
 @Data
 @Builder
 public class WorkerTask extends WorkerJob {
@@ -33,6 +35,10 @@ public class WorkerTask extends WorkerJob {
 
     @Nullable
     private ExecutionKind  executionKind;
+
+    @Nullable
+    @With
+    private Map<String, Object> outputs; //FIXME temporary
 
     /**
      * {@inheritDoc}

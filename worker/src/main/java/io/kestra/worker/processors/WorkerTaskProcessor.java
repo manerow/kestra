@@ -229,15 +229,14 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
                                 if (archive.getNextEntry() != null) {
                                     byte[] cache = archive.readAllBytes();
                                     Map<String, Object> outputMap = JacksonMapper.ofIon().readValue(cache, JacksonMapper.MAP_TYPE_REFERENCE);
-                                    Variables variables = variablesService.of(StorageContext.forTask(workerTask.getTaskRun()), outputMap);
 
                                     TaskRunAttempt attempt = TaskRunAttempt.builder()
                                         .state(new io.kestra.core.models.flows.State().withState(SUCCESS))
                                         .workerId(this.workerId)
                                         .build();
                                     List<TaskRunAttempt> attempts = this.addAttempt(workerTask, attempt);
-                                    TaskRun taskRun = workerTask.getTaskRun().withAttempts(attempts).withOutputs(variables).withState(SUCCESS);
-                                    WorkerTaskResult workerTaskResult = new WorkerTaskResult(taskRun);
+                                    TaskRun taskRun = workerTask.getTaskRun().withAttempts(attempts).withState(SUCCESS);
+                                    WorkerTaskResult workerTaskResult = new WorkerTaskResult(taskRun, outputMap);
                                     workerTaskResultQueue.put(workerTaskResult);
                                     return workerTaskResult;
                                 }
@@ -267,7 +266,7 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
                 // in this case; we return immediately without emitting any result as it would be resubmitted (except if WorkerTaskRestartStrategy is NEVER)
                 List<WorkerTaskResult> dynamicWorkerResults = workerTask.getRunContext().dynamicWorkerResults();
                 List<TaskRun> dynamicTaskRuns = dynamicWorkerResults(dynamicWorkerResults);
-                return new WorkerTaskResult(workerTask.getTaskRun(), dynamicTaskRuns);
+                return new WorkerTaskResult(workerTask.getTaskRun(), dynamicTaskRuns, workerTask.getOutputs());
             }
 
             if (workerTask.getTask().getRetry() != null &&
@@ -292,7 +291,7 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
 
             workerTask = workerTask.withTaskRun(workerTask.getTaskRun().withState(state));
 
-            WorkerTaskResult workerTaskResult = new WorkerTaskResult(workerTask.getTaskRun(), dynamicTaskRuns);
+            WorkerTaskResult workerTaskResult = new WorkerTaskResult(workerTask.getTaskRun(), dynamicTaskRuns, workerTask.getOutputs());
             workerTaskResultQueue.put(workerTaskResult);
 
             // upload the cache file, hash may not be present if we didn't succeed in computing it
@@ -304,7 +303,7 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
                      ZipOutputStream archive = new ZipOutputStream(bos)) {
                     var zipEntry = new ZipEntry("outputs.ion");
                     archive.putNextEntry(zipEntry);
-                    archive.write(JacksonMapper.ofIon().writeValueAsBytes(workerTask.getTaskRun().getOutputs()));
+                    archive.write(JacksonMapper.ofIon().writeValueAsBytes(workerTask.getOutputs()));
                     archive.closeEntry();
                     archive.finish();
                     Path archiveFile = runContext.workingDir().createTempFile(".zip");
@@ -402,12 +401,12 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
         TaskRun taskRun = workerTask.getTaskRun()
             .withAttempts(attempts);
 
+        Map<String, Object> outputs = Optional.ofNullable(workerTaskCallable.getTaskOutput()).map(it -> it.toMap()).orElse(null);
+
         try {
-            Variables variables = variablesService.of(StorageContext.forTask(taskRun), workerTaskCallable.getTaskOutput());
-            taskRun = taskRun.withOutputs(variables);
             if (workerTask.getTask().getAssets() != null) {
                 // We need to have the task outputs injected before rendering the assets
-                Map<String, Object> formattedOutputsMap = RunVariables.executionFormattedOutputMap(taskRun);
+                Map<String, Object> formattedOutputsMap = RunVariables.executionFormattedOutputMap(taskRun, outputs);
 
                 List<AssetEmit> assetEmits = runContext.assets().emitted();
                 AssetsDeclaration assetsDeclaration = workerTask.getTask().getAssets();
@@ -428,7 +427,8 @@ public class WorkerTaskProcessor extends AbstractWorkerJobProcessor<WorkerTask> 
         }
 
         return workerTask
-            .withTaskRun(taskRun);
+            .withTaskRun(taskRun)
+            .withOutputs(outputs);
     }
 
     private List<TaskRunAttempt> addAttempt(WorkerTask workerTask, TaskRunAttempt taskRunAttempt) {

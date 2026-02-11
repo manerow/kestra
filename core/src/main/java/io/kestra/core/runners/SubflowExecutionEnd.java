@@ -6,13 +6,15 @@ import io.kestra.core.models.executions.Variables;
 import io.kestra.core.models.flows.State;
 import io.kestra.core.queues.event.DispatchEvent;
 
+import java.util.Map;
+
 public record SubflowExecutionEnd(
     Execution childExecution,
     String parentExecutionId,
     String taskRunId,
     String taskId,
     State.Type state,
-    Variables outputs) implements HasUID, DispatchEvent {
+    Map<String, Object> outputs) implements HasUID, DispatchEvent {
 
     public String toStringState() {
         return "SubflowExecutionEnd(" +
