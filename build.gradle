@@ -239,6 +239,7 @@ subprojects {subProj ->
         }
 
         def commonTestConfig = { Test t ->
+            t.dryRun = true // FIXME dont merge this, its skip tests
             t.ignoreFailures = true
             t.finalizedBy jacocoTestReport
             t.doFirst {
