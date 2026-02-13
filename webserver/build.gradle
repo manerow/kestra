@@ -83,6 +83,13 @@ tasks.register('generateOpenapiSpec') {
 
 tasks.named('jar') {
     dependsOn updateOpenapiVersion
+    outputs.file(project.layout.buildDirectory.file("/classes/java/main/META-INF/swagger/kestra.yml"))
+    doLast {
+        Files.copy(
+            file("original").toPath(),
+            file("outside-project").toPath(),
+        )
+    }
 }
 
 tasks.named('compileJava') {
