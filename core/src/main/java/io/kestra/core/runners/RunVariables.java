@@ -436,6 +436,8 @@ public final class RunVariables {
         for (TaskRun childTaskRun : parents) {
             Map<String, Object> current = HashMap.newHashMap(2);
 
+            current.put("task", Map.of("id", childTaskRun.getTaskId()));
+
             if (childTaskRun.getValue() != null) {
                 current.put("taskrun", Map.of("value", childTaskRun.getValue()));
             }
