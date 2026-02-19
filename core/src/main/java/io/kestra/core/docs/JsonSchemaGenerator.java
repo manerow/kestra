@@ -31,6 +31,7 @@ import io.kestra.core.models.dashboards.DataFilterKPI;
 import io.kestra.core.models.dashboards.charts.Chart;
 import io.kestra.core.models.dashboards.charts.DataChart;
 import io.kestra.core.models.dashboards.charts.DataChartKPI;
+import io.kestra.core.models.enums.MonacoLanguages;
 import io.kestra.core.models.property.Data;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.Output;
@@ -52,7 +53,8 @@ import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 
 import java.lang.reflect.*;
-import java.time.*;
+import java.time.Duration;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -391,6 +393,9 @@ public class JsonSchemaGenerator {
                 if (pluginPropertyAnnotation.beta()) {
                     memberAttributes.put("$beta", true);
                 }
+                if (pluginPropertyAnnotation.language() != MonacoLanguages.NONE) {
+                    memberAttributes.put("$language", pluginPropertyAnnotation.language().toString());
+                }
                 if (pluginPropertyAnnotation.internalStorageURI()) {
                     memberAttributes.put("$internalStorageURI", true);
                 }
@@ -458,6 +463,10 @@ public class JsonSchemaGenerator {
 
                     if (pluginAnnotation.beta()) {
                         collectedTypeAttributes.put("$beta", true);
+                    }
+
+                    if (pluginAnnotation.language() != MonacoLanguages.NONE) {
+                        collectedTypeAttributes.put("$language", pluginAnnotation.language().toString());
                     }
 
                     if (withOutputs) {
@@ -952,6 +961,9 @@ public class JsonSchemaGenerator {
         }
         if (mainClassDef.has("$beta")) {
             objectNode.set("$beta", mainClassDef.get("$beta"));
+        }
+        if (mainClassDef.has("$language")) {
+            objectNode.set("$language", mainClassDef.get("$language"));
         }
     }
 

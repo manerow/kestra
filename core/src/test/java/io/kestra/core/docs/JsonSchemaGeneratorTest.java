@@ -7,6 +7,7 @@ import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.dashboards.Dashboard;
 import io.kestra.core.models.dashboards.GraphStyle;
+import io.kestra.core.models.enums.MonacoLanguages;
 import io.kestra.core.models.flows.Flow;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
@@ -250,8 +251,10 @@ class JsonSchemaGeneratorTest {
         Map<String, Object> generate = jsonSchemaGenerator.properties(Task.class, BetaTask.class);
         assertThat(generate, is(not(nullValue())));
         assertThat(generate.get("$beta"), is(true));
+        assertThat(generate.get("$language"), is(MonacoLanguages.JAVASCRIPT.toString()));
         assertThat(((Map<String, Map<String, Object>>) generate.get("properties")).size(), is(2));
         assertThat(((Map<String, Map<String, Object>>) generate.get("properties")).get("beta").get("$beta"), is(true));
+        assertThat(((Map<String, Map<String, Object>>) generate.get("properties")).get("beta").get("$language"), is(MonacoLanguages.PYTHON.toString()));
     }
 
     @SuppressWarnings("unchecked")
@@ -445,10 +448,11 @@ class JsonSchemaGeneratorTest {
     @Getter
     @NoArgsConstructor
     @Plugin(
-        beta = true
+        beta = true,
+        language = MonacoLanguages.JAVASCRIPT
     )
     public static class BetaTask extends Task {
-        @PluginProperty(beta = true)
+        @PluginProperty(beta = true, language = MonacoLanguages.PYTHON)
         private String beta;
     }
 
